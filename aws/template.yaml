@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  tablero-de-notas: capa serverless (AWS Lambda + API Gateway) gestionada con AWS SAM.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 15
+    MemorySize: 256
+
+Resources:
+  NotesProcessor:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub tablero-notas-processor-${Stage}
+      Description: Procesa eventos del tablero de notas (validación de estado, notificaciones, etc.).
+      CodeUri: ../lambda/
+      Handler: src.handler.lambda_handler
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+      Events:
+        StatusValidation:
+          Type: HttpApi
+          Properties:
+            Path: /notes/validate
+            Method: post
+
+Outputs:
+  NotesProcessorArn:
+    Description: ARN de la función Lambda.
+    Value: !GetAtt NotesProcessor.Arn
+
+  ApiEndpoint:
+    Description: Endpoint del HTTP API gestionado por SAM.
+    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/

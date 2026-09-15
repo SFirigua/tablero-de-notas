@@ -1,0 +1,1 @@
+# Dependencias de la Lambda (stdlib por defecto; añade aquí lo necesario)

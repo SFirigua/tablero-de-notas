@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+staticfiles/
+
+# Node
+node_modules/
+build/
+.svelte-kit/
+
+# Entorno e IDEs
+.env
+.DS_Store
+.idea/
+.vscode/
+
+# AWS SAM
+.aws-sam/
