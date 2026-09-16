@@ -10,7 +10,7 @@ COPY . .
 
 # URL del servicio de métricas consumido por /dashboard.
 # Se hornea en el bundle estático (adapter-static) — configurable, nunca hardcodeada en el código.
-ARG PUBLIC_METRICS_URL=http://localhost:8000/api/internal/notes-status/
+ARG PUBLIC_METRICS_URL=http://localhost:3001/metrics
 ENV PUBLIC_METRICS_URL=$PUBLIC_METRICS_URL
 
 RUN npm run build

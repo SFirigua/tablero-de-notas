@@ -24,9 +24,9 @@ Leer completo antes de crear o modificar cualquier archivo.
 |------------|---------------------------------------------------|------------------------------------------|
 | Frontend   | SvelteKit + TypeScript + TailwindCSS              | `@sveltejs/adapter-static`, modo SPA      |
 | Backend    | Django 5 + Django REST Framework + SimpleJWT      | PostgreSQL 15 (`psycopg2-binary`)         |
-| Serverless | AWS Lambda en Python 3.12                         | Handler: `src.handler.lambda_handler`     |
-| IaC        | AWS SAM (`aws/template.yaml`)                     | Solo servicios serverless permitidos      |
-| Local infra| Docker Compose                                    | `db` + `backend` + `frontend`             |
+| Serverless | AWS Lambda en Python 3.11                         | Handler: `app.lambda_handler`; `BACKEND_URL` configurable |
+| IaC        | AWS SAM (`aws/template.yaml`)                     | Lambda+API GW, EC2, S3 y CloudFront (OAC) |
+| Local infra| Docker Compose                                    | `db` + `backend` + `frontend`, red `tablero-net` |
 
 ## MAPA DEL REPOSITORIO
 
@@ -34,8 +34,9 @@ Leer completo antes de crear o modificar cualquier archivo.
 backend/    → API Django. apps `users` (Custom User + JWT) y `notes`; cada una con
               models/serializers/views/permissions/services/urls + management/commands
 frontend/   → SvelteKit. Salida estática en ./build, servida por Nginx (nginx.conf)
-lambda/     → Código Python de Lambdas (src/handler.py)
-aws/        → Exclusivamente infra AWS (template.yaml). NADA local aquí.
+lambda/     → app.py — Lambda de métricas (Python 3.11, solo stdlib; GET BACKEND_URL,
+              calcula total y responde CORS configurable)
+aws/        → Exclusivamente infra AWS: template.yaml (SAM) + env.local.json (SAM local).
 docker-compose.yml → Exclusivamente infra local. NADA AWS aquí.
 ```
 
@@ -70,12 +71,23 @@ npm run dev    # proxy /api -> http://localhost:8000 (vite.config.ts)
 npm run build  # salida estática en ./build
 ```
 
+Pruebas locales de la Lambda (requiere `docker compose up -d db backend` primero):
+
+```bash
+cd aws
+sam build
+sam local start-api --docker-network tablero-net --env-vars env.local.json --port 3001
+curl -i http://127.0.0.1:3001/metrics -H "Origin: http://localhost:3000"
+```
+
 Despliegue serverless (real, sobre AWS — no simuladores):
 
 ```bash
 cd aws
 sam build
 sam deploy --guided
+# Tras el primer deploy: redesplegar con BackendUrl=http://<EC2-Dns>:8000/... y
+# AllowedOrigin=https://<CloudFrontDomain> (outputs del stack).
 ```
 
 ## PUERTOS Y URLS (inmutables)
@@ -97,6 +109,9 @@ Entre contenedores los servicios se resuelven por nombre: `db`, `backend`, `fron
 - Prohibido hardcodear credenciales, hosts o puertos en código de aplicación.
 - `POSTGRES_HOST` debe seguir siendo `db` en local (nombre de servicio compose).
 - Los orígenes CORS nuevos se añaden a `CORS_ALLOWED_ORIGINS`/env, nunca en código.
+- Lambda: `BACKEND_URL` (local: `http://backend:8000/api/internal/notes-status/`;
+  AWS: parámetro `BackendUrl` apuntando al EC2 — el hostname `backend` NO existe en AWS)
+  y `ALLOWED_ORIGIN` (CORS, CSV; `*` solo opt-in explícito, nunca default).
 
 ## CREDENCIALES DE DEMO (solo seed, no producción)
 
@@ -164,13 +179,24 @@ docker compose up --build                        # arranca sin errores
   drag & drop con pointer events + edición inline) y `/dashboard/users` (solo ADMIN).
 - `PUBLIC_METRICS_URL` es la ÚNICA variable para las métricas del dashboard: se lee
   con `$env/static/public` (se hornea en la build; `frontend/.env` local, ARG del
-  Dockerfile y arg de compose). Prohibido hardcodear URLs de infraestructura en el código.
+  Dockerfile y arg de compose). Local default: `http://localhost:3001/metrics`
+  (SAM local). Prohibido hardcodear URLs de infraestructura en el código.
+- La red de compose se llama **`tablero-net`** (fijada con `name:`) porque
+  `sam local start-api --docker-network tablero-net` la referencia por ese nombre.
+- `aws/template.yaml` define `MetricsFunction` (Lambda 3.11, GET/OPTIONS `/metrics`),
+  `ApiInstance` (EC2 backend Docker), `FrontendBucket` (S3 privado) y
+  `CloudFrontDistribution` (OAC), más apoyos (`FrontendOAC`, `FrontendBucketPolicy`,
+  `ApiSecurityGroup`). Outputs: ApiEndpoint, CloudFrontUrl, FrontendBucketName, etc.
+- Lambda verificada localmente con harness (13 checks en verde): total calculado,
+  CORS por origen configurado, preflight OPTIONS, 403 origen no permitido, 502 si el
+  backend cae, eventos v1 y v2.
 
 ## ALCANCE PENDIENTE (orden sugerido para las 8h)
 
-1. Pruebas mínimas (backend: `TestCase` con pytest o Django tests; frontend: smoke).
-2. Rol de la Lambda en un flujo real (p. ej. validación/notificación de cambios de estado).
-3. Refresh automático del access token en el frontend (hoy: expira -> re-login).
+1. Pruebas mínimas dentro del repo (backend: `TestCase` con pytest o Django tests;
+   frontend: smoke).
+2. Refresh automático del access token en el frontend (hoy: expira -> re-login).
+3. Automatizar el bootstrap del backend en EC2 (hoy: copiar repo + `docker compose up` manual).
 
 No ampliar el alcance con funciones no pedidas (realtime, colas, cachés, microservicios).
 

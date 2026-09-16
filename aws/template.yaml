@@ -1,43 +1,240 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  tablero-de-notas: capa serverless (AWS Lambda + API Gateway) gestionada con AWS SAM.
+  Tablero de Notas - infraestructura AWS (AWS SAM):
+  Lambda de métricas + API Gateway, servidor EC2 para el backend Django
+  y frontend estático SvelteKit en S3 + CloudFront con Origin Access Control.
 
+# --------------------------------------------------------------------------- #
+# Parámetros                                                                    #
+# --------------------------------------------------------------------------- #
 Parameters:
   Stage:
     Type: String
     Default: dev
     AllowedValues: [dev, prod]
+    Description: Entorno (se usa como sufijo en nombres de recursos).
+
+  BackendUrl:
+    Type: String
+    Default: http://backend:8000/api/internal/notes-status/
+    Description: >
+      URL del endpoint de métricas del backend Django (variable BACKEND_URL de la Lambda).
+      LOCAL (sam local + red docker): http://backend:8000/api/internal/notes-status/
+      AWS: http://<ApiInstancePublicDns>:8000/api/internal/notes-status/ — ver salida
+      BackendUrlForLambda y redesplegar con --parameter-overrides.
+      IMPORTANTE: el hostname "backend" solo existe en la red de docker-compose;
+      en AWS NUNCA debe usarse.
+
+  AllowedOrigin:
+    Type: String
+    Default: http://localhost:3000
+    Description: >
+      Origen(es) permitidos para CORS en la Lambda (lista separada por comas).
+      En AWS usar la URL de CloudFront (salida CloudFrontUrl) tras el primer deploy,
+      p. ej. AllowedOrigin=https://d123.cloudfront.net,http://localhost:3000.
+      "*" es válido pero desaconsejado (requisito: CORS configurable, no comodín fijo).
+
+  InstanceType:
+    Type: String
+    Default: t3.small
+    Description: Tipo de instancia EC2 que ejecuta los contenedores Docker del backend.
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: ""
+    Description: Par de claves SSH para la instancia (vacío = sin acceso SSH).
+
+  SshCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR permitido para SSH (restringir en entornos reales).
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
 
 Globals:
   Function:
-    Runtime: python3.12
-    Timeout: 15
+    Runtime: python3.11
+    Timeout: 10
     MemorySize: 256
 
+# --------------------------------------------------------------------------- #
+# Recursos                                                                      #
+# --------------------------------------------------------------------------- #
 Resources:
-  NotesProcessor:
+  # -------------------------------------------------------------------------- #
+  # 1) Lambda de métricas + API Gateway (GET /metrics)
+  # -------------------------------------------------------------------------- #
+  MetricsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub tablero-notas-processor-${Stage}
-      Description: Procesa eventos del tablero de notas (validación de estado, notificaciones, etc.).
+      FunctionName: !Sub tablero-notas-metrics-${Stage}
+      Description: Consulta métricas de notas al backend Django y agrega el total.
       CodeUri: ../lambda/
-      Handler: src.handler.lambda_handler
+      Handler: app.lambda_handler
       Environment:
         Variables:
-          STAGE: !Ref Stage
+          BACKEND_URL: !Ref BackendUrl
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
       Events:
-        StatusValidation:
-          Type: HttpApi
+        MetricsGet:
+          Type: Api
           Properties:
-            Path: /notes/validate
-            Method: post
+            Path: /metrics
+            Method: get
+        MetricsPreflight:
+          Type: Api
+          Properties:
+            Path: /metrics
+            Method: options
 
+  # -------------------------------------------------------------------------- #
+  # 2) Servidor EC2 para el contenedor Docker de Django (+ PostgreSQL)
+  # -------------------------------------------------------------------------- #
+  ApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Tablero de Notas ${Stage} - API Django (8000) y SSH (22)"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+          Description: "API Django (demo; restringir a la Lambda/VPC en producción)"
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshCidr
+          Description: "SSH de administración"
+      Tags:
+        - Key: Name
+          Value: !Sub tablero-notas-api-sg-${Stage}
+
+  ApiInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      # AMI dinámica: última Amazon Linux 2023 de la región (vía SSM público)
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+      InstanceType: !Ref InstanceType
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      SecurityGroupIds:
+        - !Ref ApiSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub tablero-notas-api-${Stage}
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+          dnf install -y docker git
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+          # Docker Compose (plugin v2)
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+  # -------------------------------------------------------------------------- #
+  # 3) Frontend estático: bucket S3 + distribución CloudFront con OAC
+  # -------------------------------------------------------------------------- #
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "tablero-notas-frontend-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub tablero-notas-frontend-${Stage}
+
+  # Origin Access Control: CloudFront firma con SigV4 y el bucket permanece privado.
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub tablero-notas-oac-${Stage}
+        Description: OAC para el bucket del frontend SvelteKit
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Política que autoriza Únicamente a esta distribución a leer el bucket.
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOACReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution.Id}
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub tablero-notas-frontend-${Stage}
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: frontend-s3-origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: frontend-s3-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+          # Política gestionada "CachingOptimized"
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # Fallback SPA: coincide con `fallback: 'index.html'` del adapter-static
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+# --------------------------------------------------------------------------- #
+# Salidas                                                                       #
+# --------------------------------------------------------------------------- #
 Outputs:
-  NotesProcessorArn:
-    Description: ARN de la función Lambda.
-    Value: !GetAtt NotesProcessor.Arn
-
   ApiEndpoint:
-    Description: Endpoint del HTTP API gestionado por SAM.
-    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/
+    Description: "API Gateway -> Lambda GET /metrics. Usar como PUBLIC_METRICS_URL en AWS."
+    Value: !Sub https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/metrics
+
+  CloudFrontUrl:
+    Description: "URL pública del frontend. Usar como AllowedOrigin (CORS) tras el primer deploy."
+    Value: !Sub https://${CloudFrontDistribution.DomainName}
+
+  CloudFrontDistributionId:
+    Description: "ID de la distribución CloudFront (para crear invalidaciones de caché)."
+    Value: !Ref CloudFrontDistribution
+
+  FrontendBucketName:
+    Description: "Bucket S3 destino de `aws s3 sync ./build s3://<bucket> --delete`."
+    Value: !Ref FrontendBucket
+
+  ApiInstancePublicDns:
+    Description: "DNS público de la instancia EC2 que ejecuta el backend Django."
+    Value: !GetAtt ApiInstance.PublicDnsName
+
+  BackendUrlForLambda:
+    Description: "Valor del parámetro BackendUrl para AWS (redesplegar con --parameter-overrides BackendUrl=...)."
+    Value: !Sub http://${ApiInstance.PublicDnsName}:8000/api/internal/notes-status/

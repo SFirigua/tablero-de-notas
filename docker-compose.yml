@@ -47,9 +47,11 @@ services:
       context: ./frontend
       args:
         # URL de métricas que consume /dashboard (PUBLIC_METRICS_URL).
-        # Default: endpoint de Django para que la demo funcione sin servicios extra.
-        # Alternativas: http://localhost:3001/metrics (local) o https://<API_GATEWAY>/metrics (AWS).
-        PUBLIC_METRICS_URL: ${PUBLIC_METRICS_URL:-http://localhost:8000/api/internal/notes-status/}
+        # Local con SAM: ejecutar `sam local start-api --docker-network tablero-net --port 3001`
+        #   (la Lambda local sirve GET /metrics en http://localhost:3001/metrics).
+        # Alternativa sin SAM: http://localhost:8000/api/internal/notes-status/ (Django).
+        # AWS: https://<API_GATEWAY>/Prod/metrics
+        PUBLIC_METRICS_URL: ${PUBLIC_METRICS_URL:-http://localhost:3001/metrics}
     container_name: tablero-frontend
     restart: unless-stopped
     ports:
@@ -64,4 +66,6 @@ volumes:
 
 networks:
   tablero-net:
+    # Nombre fijo: lo referencia `sam local start-api --docker-network tablero-net`
+    name: tablero-net
     driver: bridge

@@ -1,1 +1,3 @@
-# Dependencias de la Lambda (stdlib por defecto; añade aquí lo necesario)
+# Dependencias de la Lambda.
+# app.py usa solo la librería estándar de Python (urllib.request, json, os):
+# no requiere paquetes externos. Añade aquí dependencias solo si son necesarias.
