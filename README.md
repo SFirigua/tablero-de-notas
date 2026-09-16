@@ -16,6 +16,84 @@ una capa serverless sobre AWS.
 
 ---
 
+## Quickstart (instalación rápida)
+
+> Todo el flujo local funciona **sin cuenta AWS**. Con Docker en marcha es suficiente;
+> para las métricas del dashboard se agrega la Lambda local con **AWS SAM CLI**
+> (también sin cuenta AWS). El detalle de cada paso está en las secciones 4 y 9.
+
+### 0. Requisitos
+
+| Herramienta                        | Uso                                              | ¿Obligatorio? |
+|------------------------------------|--------------------------------------------------|---------------|
+| Docker Engine + Docker Compose v2  | `db` + `backend` + `frontend` (y build de la Lambda) | Sí |
+| AWS SAM CLI                        | Lambda de métricas en local (`sam local`)        | Sí, para ver `/dashboard` con métricas |
+| AWS CLI v2                         | Despliegue real en AWS                           | Solo para deploy |
+| Node.js 20+ / Python 3.12+         | Desarrollo fuera de Docker (sección 4.1)         | Opcional |
+
+### 1. Levantar la aplicación (3 comandos)
+
+```bash
+cp .env.example .env          # opcional: ajustar secretos
+docker compose up -d --build  # levanta db + backend + frontend
+docker compose exec backend python manage.py seed_data
+```
+
+> Si el `seed_data` falla porque el backend aún está migrando, espera unos segundos y
+> repítelo (el comando es idempotente).
+
+| Servicio          | URL                                 |
+|-------------------|-------------------------------------|
+| Frontend          | http://localhost:3000               |
+| Backend API (DRF) | http://localhost:8000/api/          |
+| Django Admin      | http://localhost:8000/django-admin/ |
+| PostgreSQL        | localhost:5432                      |
+
+### 2. Levantar la Lambda local con SAM (necesario para el dashboard)
+
+Con el paso 1 en marcha (la red `tablero-net` ya existe):
+
+```bash
+cd aws
+sam build --use-container
+sam local start-api --docker-network tablero-net --env-vars env.local.json --port 3001
+```
+
+Verificación (en otra terminal):
+
+```bash
+curl -i http://127.0.0.1:3001/metrics -H "Origin: http://localhost:3000"
+# → {"total": 3, "pending": 1, "in_progress": 1, "done": 1} + cabeceras CORS
+```
+
+`aws/samconfig.toml` ya fija `--use-container`, la red, el archivo de env y el puerto,
+así que desde `aws/` también bastan `sam build` y `sam local start-api` a secas.
+
+### 3. Iniciar sesión
+
+| Cuenta     | Email               | Contraseña  | Rol   |
+|------------|---------------------|-------------|-------|
+| Admin Demo | `admin@ejemplo.com` | `Admin123!` | ADMIN |
+| User Demo  | `user@ejemplo.com`  | `User123!`  | USER  |
+
+En `/login`, los botones de **Acceso Rápido** autocompletan estas credenciales.
+
+### 4. Comandos útiles
+
+```bash
+docker compose logs -f backend                            # logs en vivo
+docker compose down                                       # detener (los datos persisten)
+docker compose down -v                                    # reset total (borra la base)
+docker compose up -d --build                              # reconstruir y arrancar
+docker compose exec backend python manage.py seed_data    # datos demo (idempotente)
+```
+
+- Desarrollo sin Docker (backend/frontend por separado) → sección **4.1**.
+- Pruebas de la Lambda (build, CORS, cold start) → sección **9**.
+- Despliegue y retirada en AWS → sección **10**.
+
+---
+
 ## Versión entregada
 
 - **Repositorio:** https://github.com/SFirigua/tablero-de-notas
