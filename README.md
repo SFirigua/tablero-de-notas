@@ -20,7 +20,10 @@ Prueba técnica fullstack:
 ├── frontend/           # SvelteKit + Tailwind (adapter-static -> /build)
 │   ├── Dockerfile      # multietapa: Node build -> Nginx
 │   ├── nginx.conf
-│   └── svelte.config.js
+│   ├── svelte.config.js
+│   └── src/
+│       ├── lib/        # api (fetch wrapper JWT), stores de sesión, componentes (PostIt, Modal)
+│       └── routes/     # /login, /dashboard, /dashboard/board, /dashboard/users
 ├── lambda/             # código Python de la Lambda
 │   └── src/handler.py
 ├── aws/
@@ -105,11 +108,30 @@ Todas las rutas (salvo login/refresh) requieren `Authorization: Bearer <access>`
 | POST   | `/api/users/`               | ADMIN               | Alta con contraseña inicial (login inmediato) |
 | GET    | `/api/users/<id>/`          | ADMIN               | Detalle |
 | PATCH  | `/api/users/<id>/`          | ADMIN               | Parcial (`email`, `name`, `role`, `is_active`) |
-| GET    | `/api/internal/notes-status/` | ADMIN (interno)   | `{"pending": X, "in_progress": Y, "done": Z}` |
+| GET    | `/api/internal/notes-status/` | Usuario activo    | `{"pending": X, "in_progress": Y, "done": Z}` |
 
 Regla de negocio (`users/services.py`): no se puede **desactivar** ni **cambiar de rol**
 al **último administrador activo** del sistema; en ese caso la API responde **400**.
 `PUT` está deshabilitado en notas y usuarios: la edición es siempre parcial vía `PATCH`.
+
+## Frontend (rutas y sesión)
+
+| Ruta               | Acceso         | Descripción |
+|--------------------|----------------|-------------|
+| `/login`           | Público        | Login + botones de **Acceso Rápido** (Admin Demo / User Demo) que autocompletan credenciales |
+| `/dashboard`       | Usuario activo | Tarjetas de métricas: Total, Pendientes, En curso, Hechas |
+| `/dashboard/board` | Usuario activo | Lienzo libre con post-its arrastrables (pointer events) y edición inline |
+| `/dashboard/users` | Solo ADMIN     | Tabla de usuarios + modal de alta + switch Activo/Inactivo + cambio de rol |
+
+- El access token se guarda en **sessionStorage** (`tablero.token`) con espejo en memoria
+  (`src/lib/stores/auth.ts`) y se envía vía `Authorization: Bearer <token>`.
+- El fetch wrapper (`src/lib/api/client.ts`) intercepta **HTTP 401**: limpia la sesión y
+  redirige a `/login`.
+- **Métricas:** el dashboard consume exclusivamente la variable `PUBLIC_METRICS_URL`
+  (nada hardcodeado en el código). Local: `http://localhost:3001/metrics`;
+  AWS: `<URL_API_GATEWAY>/metrics`. Por defecto el compose apunta al endpoint de Django
+  (`http://localhost:8000/api/internal/notes-status/`) para que la demo funcione sin
+  servicios extra; se sobreescribe con la variable de entorno del mismo nombre.
 
 ## Desarrollo local
 
@@ -156,3 +178,9 @@ sam deploy --guided
 | `POSTGRES_HOST`        | `db`                             | Host (nombre del servicio compose)|
 | `POSTGRES_PORT`        | `5432`                           | Puerto de PostgreSQL              |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000`          | Orígenes CORS permitidos (CSV)    |
+
+## Variables de entorno (frontend)
+
+| Variable             | Default                                            | Descripción |
+|----------------------|----------------------------------------------------|-------------|
+| `PUBLIC_METRICS_URL` | `http://localhost:8000/api/internal/notes-status/` | URL del servicio de métricas que consume `/dashboard` (se hornea en la build estática) |

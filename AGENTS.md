@@ -119,8 +119,9 @@ Entre contenedores los servicios se resuelven por nombre: `db`, `backend`, `fron
   activo** en `users/services.py` -> **400** al intentar desactivarlo o cambiarle el rol.
 - Logout es **del lado cliente** (JWT sin estado): el frontend borra los tokens;
   el endpoint no revoca el access token (expira solo). No agregar blacklist sin pedirlo.
-- Métricas `GET /api/internal/notes-status/` protegidas (ADMIN), formato exacto
-  `{"pending": X, "in_progress": Y, "done": Z}`.
+- Métricas `GET /api/internal/notes-status/` protegidas (cualquier usuario activo),
+  formato exacto `{"pending": X, "in_progress": Y, "done": Z}`. El dashboard del
+  frontend las consume vía `PUBLIC_METRICS_URL`.
 
 ## MODELADO Y MIGRACIONES
 
@@ -156,15 +157,20 @@ docker compose up --build                        # arranca sin errores
 - La API completa fue verificada end-to-end con un harness SQLite temporal
   (40 comprobaciones en verde): login/refresh, CRUD notes, users solo-ADMIN,
   regla del último admin, inactivo -> 401, métricas y logout.
-- Frontend: el login guarda `access` y `user` en localStorage (claves
-  `tablero.token` / `tablero.user`); un 401 en cualquier llamada hace logout local.
+- Frontend: sesión en **sessionStorage** (claves `tablero.token` / `tablero.user`)
+  con espejo en memoria (`src/lib/stores/auth.ts`); un 401 en cualquier llamada
+  (fetch wrapper en `src/lib/api/client.ts`) limpia la sesión y redirige a `/login`.
+- Frontend: rutas `/login`, `/dashboard` (métricas), `/dashboard/board` (canvas
+  drag & drop con pointer events + edición inline) y `/dashboard/users` (solo ADMIN).
+- `PUBLIC_METRICS_URL` es la ÚNICA variable para las métricas del dashboard: se lee
+  con `$env/static/public` (se hornea en la build; `frontend/.env` local, ARG del
+  Dockerfile y arg de compose). Prohibido hardcodear URLs de infraestructura en el código.
 
 ## ALCANCE PENDIENTE (orden sugerido para las 8h)
 
-1. Drag & drop de notas en el frontend (actualizar `pos_x`/`pos_y` vía `PATCH /api/notes/{id}/`).
-2. CRUD de notas desde la UI (crear, cambiar columna/estado, eliminar).
-3. Pruebas mínimas (backend: `TestCase` con pytest o Django tests; frontend: smoke).
-4. Rol de la Lambda en un flujo real (p. ej. validación/notificación de cambios de estado).
+1. Pruebas mínimas (backend: `TestCase` con pytest o Django tests; frontend: smoke).
+2. Rol de la Lambda en un flujo real (p. ej. validación/notificación de cambios de estado).
+3. Refresh automático del access token en el frontend (hoy: expira -> re-login).
 
 No ampliar el alcance con funciones no pedidas (realtime, colas, cachés, microservicios).
 

@@ -5,7 +5,7 @@ from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from users.permissions import IsActiveUser, IsAdminRole
+from users.permissions import IsActiveUser
 
 from . import permissions as note_permissions
 from . import services
@@ -37,11 +37,11 @@ class NotesStatusMetricsView(APIView):
     """
     GET /api/internal/notes-status/ -> {"pending": X, "in_progress": Y, "done": Z}
 
-    Protegido: requiere JWT de usuario ADMIN. Pensado para consumo interno
-    (dashboards/otros servicios de la demo); no está expuesto al tablero.
+    Protegido: requiere JWT de un usuario activo (ADMIN o USER). Lo consume
+    el dashboard del frontend a través de la variable PUBLIC_METRICS_URL.
     """
 
-    permission_classes = [IsActiveUser, IsAdminRole]
+    permission_classes = [IsActiveUser]
 
     def get(self, request):
         return Response(services.status_counts())

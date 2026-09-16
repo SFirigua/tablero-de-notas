@@ -43,7 +43,13 @@ services:
       - tablero-net
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # URL de métricas que consume /dashboard (PUBLIC_METRICS_URL).
+        # Default: endpoint de Django para que la demo funcione sin servicios extra.
+        # Alternativas: http://localhost:3001/metrics (local) o https://<API_GATEWAY>/metrics (AWS).
+        PUBLIC_METRICS_URL: ${PUBLIC_METRICS_URL:-http://localhost:8000/api/internal/notes-status/}
     container_name: tablero-frontend
     restart: unless-stopped
     ports:
