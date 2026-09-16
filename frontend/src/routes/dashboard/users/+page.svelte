@@ -17,6 +17,12 @@
 	let formError = $state<string | null>(null);
 	let form = $state({ email: '', name: '', role: 'USER' as UserRole, password: '' });
 
+	let showEdit = $state(false);
+	let savingEdit = $state(false);
+	let editError = $state<string | null>(null);
+	let editing = $state<ManagedUser | null>(null);
+	let editForm = $state({ email: '', name: '' });
+
 	onMount(async () => {
 		if (!get(isAuthenticated)) {
 			await goto('/login');
@@ -80,6 +86,29 @@
 			creating = false;
 		}
 	}
+
+	function openEdit(user: ManagedUser) {
+		editing = user;
+		editForm = { email: user.email, name: user.name };
+		editError = null;
+		showEdit = true;
+	}
+
+	async function submitEdit(event: SubmitEvent) {
+		event.preventDefault();
+		if (!editing) return;
+		editError = null;
+		savingEdit = true;
+		try {
+			// Reutiliza PATCH /api/users/<id>/ (misma lógica de negocio del backend).
+			replace(await updateUser(editing.id, { email: editForm.email, name: editForm.name }));
+			showEdit = false;
+		} catch (e) {
+			editError = e instanceof ApiError ? e.message : 'No se pudo guardar el usuario.';
+		} finally {
+			savingEdit = false;
+		}
+	}
 </script>
 
 <div class="mx-auto max-w-5xl p-6">
@@ -111,12 +140,13 @@
 					<th class="px-4 py-3">Nombre</th>
 					<th class="px-4 py-3">Rol</th>
 					<th class="px-4 py-3">Activo</th>
+					<th class="px-4 py-3">Acciones</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#if loading}
 					<tr>
-						<td class="px-4 py-4 text-slate-500" colspan="4">Cargando usuarios…</td>
+						<td class="px-4 py-4 text-slate-500" colspan="5">Cargando usuarios…</td>
 					</tr>
 				{:else}
 					{#each users as user (user.id)}
@@ -150,6 +180,15 @@
 											? 'left-[22px]'
 											: 'left-0.5'}"
 									></span>
+								</button>
+							</td>
+							<td class="px-4 py-3">
+								<button
+									type="button"
+									class="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+									onclick={() => openEdit(user)}
+								>
+									Editar
 								</button>
 							</td>
 						</tr>
@@ -205,6 +244,47 @@
 				disabled={creating}
 			>
 				{creating ? 'Creando…' : 'Crear usuario'}
+			</button>
+		</div>
+	</form>
+</Modal>
+
+<Modal title="Editar usuario" open={showEdit} onclose={() => (showEdit = false)}>
+	<form class="flex flex-col gap-3" onsubmit={submitEdit}>
+		<input
+			class="rounded border border-slate-300 px-3 py-2"
+			type="email"
+			placeholder="Email"
+			bind:value={editForm.email}
+			required
+		/>
+		<input
+			class="rounded border border-slate-300 px-3 py-2"
+			type="text"
+			placeholder="Nombre"
+			bind:value={editForm.name}
+			required
+		/>
+		<p class="text-xs text-slate-500">
+			El rol y el estado activo se gestionan directamente en la tabla.
+		</p>
+		{#if editError}
+			<p class="text-sm text-red-600">{editError}</p>
+		{/if}
+		<div class="mt-2 flex justify-end gap-2">
+			<button
+				type="button"
+				class="rounded border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+				onclick={() => (showEdit = false)}
+			>
+				Cancelar
+			</button>
+			<button
+				type="submit"
+				class="rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+				disabled={savingEdit}
+			>
+				{savingEdit ? 'Guardando…' : 'Guardar cambios'}
 			</button>
 		</div>
 	</form>

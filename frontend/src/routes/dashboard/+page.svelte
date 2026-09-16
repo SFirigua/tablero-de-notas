@@ -1,14 +1,26 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { fetchMetrics, totalNotes } from '$lib/api/metrics';
-	import { ApiError } from '$lib/api/client';
+	import { apiFetch, ApiError } from '$lib/api/client';
 	import type { Metrics } from '$lib/types';
 
 	let metrics = $state<Metrics | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	onMount(load);
+	onMount(init);
+
+	async function init() {
+		// La API (is_active) es la autoridad de la sesión: este ping autenticado
+		// usa el fetch wrapper común, de modo que un 401 limpia la sesión y
+		// redirige a /login. No es un mecanismo de autenticación adicional.
+		try {
+			await apiFetch('/api/internal/notes-status/');
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 401) return; // el wrapper ya redirigió
+		}
+		await load();
+	}
 
 	async function load() {
 		loading = true;

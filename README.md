@@ -16,6 +16,14 @@ una capa serverless sobre AWS.
 
 ---
 
+## Versión entregada
+
+- **Repositorio:** https://github.com/SFirigua/tablero-de-notas
+- **Versión:** tag **`v1.0.0`**. La entrega corresponde al commit al que apunta el tag;
+  puede resolverse con `git rev-parse v1.0.0` o inspeccionarse con `git show v1.0.0 --stat`.
+
+---
+
 ## 1. Arquitectura general
 
 ### Local (docker compose + SAM local)
@@ -62,7 +70,7 @@ necesarios (`FrontendOAC`, `FrontendBucketPolicy`, `ApiSecurityGroup`).
 ├── backend/            # API Django + DRF (apps `users` y `notes`, capas View→Service→Model)
 ├── frontend/           # SvelteKit + Tailwind (build estática en ./build, servida por Nginx)
 ├── lambda/             # app.py — Lambda de métricas (Python 3.11)
-├── aws/                # template.yaml (SAM), env.local.json (pruebas locales)
+├── aws/                # template.yaml (SAM), env.local.json y scripts deploy/delete (.sh y .ps1)
 ├── docker-compose.yml  # infra local: db + backend + frontend (red tablero-net)
 └── README.md
 ```
@@ -96,6 +104,40 @@ docker compose exec backend python manage.py seed_data
 | Lambda de métricas (SAM local, opcional) | http://localhost:3001/metrics |
 
 El comando de seed es **idempotente**: se puede ejecutar varias veces sin duplicar datos.
+
+> **Métricas del dashboard en local:** `/dashboard` consume la **Lambda local** en
+> `PUBLIC_METRICS_URL` (`http://localhost:3001/metrics`). Requiere ejecutar SAM local
+> (sección 9) con el backend en marcha; sin SAM, el dashboard muestra un error de
+> conexión (existe una alternativa sin SAM en la sección 8, pero **no sustituye** a la
+> Lambda exigida por la prueba).
+
+### 4.1 Desarrollo sin Docker (backend y frontend por separado)
+
+Backend:
+
+```bash
+cd backend
+python -m venv .venv && .venv/Scripts/activate   # Windows; Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt
+docker compose up db -d                            # solo PostgreSQL
+python manage.py migrate && python manage.py runserver 8000
+```
+
+Frontend (en un clon limpio hay que crear el `.env` local a partir del ejemplo;
+**los `.env` reales no se versionan**):
+
+```bash
+cd frontend
+cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
+npm install                   # Windows/PowerShell: npm.cmd install
+npm run dev                   # proxy /api -> http://localhost:8000 (vite.config.ts)
+npm run build                 # salida estática en ./build
+```
+
+`PUBLIC_METRICS_URL` se resuelve así según el flujo: **Docker** la hornea desde el build
+arg de `docker-compose.yml`/`Dockerfile` (no necesita `.env`); **`npm run dev`/`npm run
+build` locales** la leen de `frontend/.env` (por eso el `cp` es obligatorio en un clon
+nuevo).
 
 ---
 
@@ -156,10 +198,13 @@ El access token se envía en `Authorization: Bearer <token>` y se guarda en `ses
 | `/dashboard/board` | Usuario activo | Lienzo libre: post-its con drag & drop (pointer events), edición inline, crear/eliminar |
 | `/dashboard/users` | Solo ADMIN     | Tabla, alta por modal, switch Activo/Inactivo, cambio de rol |
 
-**Métricas**: única variable de configuración `PUBLIC_METRICS_URL` (sin URLs hardcodeadas
-en el código). Local: `http://localhost:3001/metrics` (SAM local). AWS:
-`https://<API_GATEWAY>/Prod/metrics`. Requiere que la Lambda esté levantada (ver sección 9);
-alternativa sin SAM: `http://localhost:8000/api/internal/notes-status/` (Django directo).
+**Métricas**: el dashboard consume el resultado de la **Lambda** de métricas; su URL sale
+exclusivamente de la variable `PUBLIC_METRICS_URL` (nada hardcodeado en el código).
+Local: `http://localhost:3001/metrics` (SAM local, sección 9). AWS:
+`https://<API_GATEWAY>/Prod/metrics`. **La Lambda local debe estar disponible en esa URL**;
+sin ella el dashboard muestra un error de conexión. La alternativa
+`http://localhost:8000/api/internal/notes-status/` (Django directo) sirve solo para demos
+sin SAM y **no reemplaza** el flujo con Lambda exigido por la prueba.
 
 ---
 
@@ -201,15 +246,29 @@ curl -i http://127.0.0.1:3001/metrics -H "Origin: http://localhost:3000"
 
 ## 10. Despliegue y retirada en AWS
 
+Scripts incluidos en `aws/` (equivalen a los comandos manuales; ejecutan `sam build` +
+`sam deploy`/`sam delete` y muestran los Outputs):
+
+| Entorno                                   | Despliegue   | Retirada     |
+|-------------------------------------------|--------------|--------------|
+| Linux / macOS (o Windows con Git Bash/WSL) | `./deploy.sh` | `./delete.sh` |
+| Windows PowerShell nativo                  | `.\deploy.ps1` | `.\delete.ps1` |
+
+> **Bash o PowerShell:** usa los `.sh` en Linux/macOS o en Windows dentro de Git Bash/WSL;
+> usa los `.ps1` en PowerShell nativo. Si la política de ejecución bloquea los scripts,
+> invócalos con `powershell -ExecutionPolicy Bypass -File .\deploy.ps1` (mismo caso para
+> `delete.ps1`). Requieren AWS CLI v2 configurada (`aws configure`) y AWS SAM CLI en el PATH.
+
 ### 10.1 Infraestructura (SAM)
+
+Primera pasada (defaults del template; los scripts son opcionales, también puede usarse
+`sam build` + `sam deploy --guided` a mano):
 
 ```bash
 cd aws
-sam build
-sam deploy --guided
-# Stack: tablero-notas | Región: p.ej. us-east-1
-# Parámetros: BackendUrl (dejar default en el primer deploy), AllowedOrigin,
-#             InstanceType, KeyName, SshCidr
+./deploy.sh          # PowerShell: .\deploy.ps1
+# Parámetros del template: BackendUrl (default en la 1ª pasada), AllowedOrigin,
+# InstanceType, KeyName, SshCidr
 ```
 
 Tras el primer deploy, tomar de los **Outputs**:
@@ -219,14 +278,18 @@ Tras el primer deploy, tomar de los **Outputs**:
 Y redesplegar con la configuración real (segunda pasada):
 
 ```bash
-sam deploy --parameter-overrides \
-  BackendUrl=http://<ApiInstancePublicDns>:8000/api/internal/notes-status/ \
-  AllowedOrigin=https://<CloudFrontDomain> \
-  --no-confirm-changeset
+BACKEND_URL="http://<ApiInstancePublicDns>:8000/api/internal/notes-status/" \
+ALLOWED_ORIGIN="https://<CloudFrontDomain>" \
+./deploy.sh
+# PowerShell:
+#   $env:BACKEND_URL="http://<ApiInstancePublicDns>:8000/api/internal/notes-status/"
+#   $env:ALLOWED_ORIGIN="https://<CloudFrontDomain>"
+#   .\deploy.ps1
 ```
 
 > En AWS, `BackendUrl` apunta a la API desplegada en EC2. El hostname `backend` de Docker
-> **nunca** se usa en la nube.
+> **nunca** se usa en la nube. Para el resto de parámetros: `EXTRA_OVERRIDES` (p. ej.
+> `EXTRA_OVERRIDES="InstanceType=t3.large KeyName=mi-clave"`).
 
 ### 10.2 Backend en EC2
 
@@ -265,11 +328,13 @@ aws cloudfront create-invalidation \
 ### 10.4 Retirada
 
 ```bash
-# El bucket debe vaciarse antes de eliminar el stack:
-aws s3 rm s3://<FrontendBucketName> --recursive
 cd aws
-sam delete --stack-name tablero-notas
+./delete.sh          # PowerShell: .\delete.ps1
 ```
+
+Los scripts vacían `FrontendBucket` (CloudFormation no elimina buckets con objetos) y
+ejecutan `sam delete`. Manualmente serían:
+`aws s3 rm s3://<FrontendBucketName> --recursive` + `sam delete --stack-name tablero-notas`.
 
 ---
 
@@ -291,16 +356,17 @@ la única configuración; los orígenes no permitidos reciben 403.
 
 ---
 
-## 12. Registro de tiempo estimado (≈7 horas efectivas)
+## 12. Registro de tiempo estimado (≈7.5 horas efectivas)
 
-| Fase                                                        | Tiempo |
-|-------------------------------------------------------------|--------|
-| Backend: custom user, JWT, permisos, capas, reglas, seed    | 2.5 h  |
-| Frontend: login, tablero drag & drop, dashboard, usuarios   | 2.0 h  |
-| Lambda + plantilla SAM (S3/CloudFront/OAC, EC2)             | 1.0 h  |
-| Docker/infra local, documentación y scripts                 | 1.0 h  |
-| Verificación end-to-end (API 40 checks, Lambda 13 checks)   | 0.5 h  |
-| **Total**                                                   | **≈7 h** |
+| Fase                                                          | Tiempo |
+|---------------------------------------------------------------|--------|
+| Backend: custom user, JWT, permisos, capas, reglas, seed      | 2.5 h  |
+| Frontend: login, tablero drag & drop, dashboard, usuarios     | 2.0 h  |
+| Lambda + plantilla SAM (S3/CloudFront/OAC, EC2)               | 1.0 h  |
+| Docker/infra local, documentación y scripts                   | 1.0 h  |
+| Verificación end-to-end (API 40 checks, Lambda 13 checks)     | 0.5 h  |
+| Cierre: scripts AWS, edición de usuarios en UI, docs y re-check | 0.5 h |
+| **Total**                                                     | **≈7.5 h** |
 
 ---
 

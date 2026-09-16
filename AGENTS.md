@@ -36,7 +36,8 @@ backend/    → API Django. apps `users` (Custom User + JWT) y `notes`; cada una
 frontend/   → SvelteKit. Salida estática en ./build, servida por Nginx (nginx.conf)
 lambda/     → app.py — Lambda de métricas (Python 3.11, solo stdlib; GET BACKEND_URL,
               calcula total y responde CORS configurable)
-aws/        → Exclusivamente infra AWS: template.yaml (SAM) + env.local.json (SAM local).
+aws/        → Exclusivamente infra AWS: template.yaml (SAM), env.local.json y scripts
+              deploy/delete en Bash (.sh) y PowerShell (.ps1).
 docker-compose.yml → Exclusivamente infra local. NADA AWS aquí.
 ```
 
@@ -84,10 +85,10 @@ Despliegue serverless (real, sobre AWS — no simuladores):
 
 ```bash
 cd aws
-sam build
-sam deploy --guided
-# Tras el primer deploy: redesplegar con BackendUrl=http://<EC2-Dns>:8000/... y
-# AllowedOrigin=https://<CloudFrontDomain> (outputs del stack).
+./deploy.sh          # PowerShell nativo: .\deploy.ps1 (equivale a sam build + sam deploy)
+# Tras el primer deploy: redesplegar con BACKEND_URL=http://<EC2-Dns>:8000/... y
+# ALLOWED_ORIGIN=https://<CloudFrontDomain> (outputs del stack).
+./delete.sh          # retirada: vacía FrontendBucket + sam delete
 ```
 
 ## PUERTOS Y URLS (inmutables)
@@ -190,6 +191,18 @@ docker compose up --build                        # arranca sin errores
 - Lambda verificada localmente con harness (13 checks en verde): total calculado,
   CORS por origen configurado, preflight OPTIONS, 403 origen no permitido, 502 si el
   backend cae, eventos v1 y v2.
+- `aws/deploy.sh|deploy.ps1|delete.sh|delete.ps1` deben permanecer consistentes con
+  `template.yaml`: parámetros `BackendUrl`/`AllowedOrigin` (+ `EXTRA_OVERRIDES`),
+  `STACK_NAME` (default `tablero-notas`), `--resolve-s3 --capabilities CAPABILITY_IAM`;
+  delete usa el output `FrontendBucketName` y `sam delete --no-prompts`.
+- UI usuarios (`/dashboard/users`): crear (modal) + editar nombre/email (modal, PATCH
+  existente) + rol/estado en tabla. No duplicar lógica de negocio del backend.
+- Dashboard (`/dashboard`): al montar hace un ping autenticado a
+  `/api/internal/notes-status/` con el wrapper común (la autoridad de `is_active` sigue
+  siendo el backend; un 401 limpia sesión y redirige); las métricas se muestran SIEMPRE
+  desde `PUBLIC_METRICS_URL` (Lambda). No implementar un segundo mecanismo de auth.
+- `frontend/.env` NO se versiona: en un clon limpio, `npm run dev/build` fuera de Docker
+  requiere `cp frontend/.env.example frontend/.env` (el flujo Docker lo provee vía ARG).
 
 ## ALCANCE PENDIENTE (orden sugerido para las 8h)
 
