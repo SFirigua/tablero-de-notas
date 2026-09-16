@@ -76,7 +76,7 @@ Pruebas locales de la Lambda (requiere `docker compose up -d db backend` primero
 
 ```bash
 cd aws
-sam build
+sam build --use-container   # compila en la imagen oficial Lambda; no requiere Python 3.11 local
 sam local start-api --docker-network tablero-net --env-vars env.local.json --port 3001
 curl -i http://127.0.0.1:3001/metrics -H "Origin: http://localhost:3000"
 ```
@@ -85,7 +85,7 @@ Despliegue serverless (real, sobre AWS — no simuladores):
 
 ```bash
 cd aws
-./deploy.sh          # PowerShell nativo: .\deploy.ps1 (equivale a sam build + sam deploy)
+./deploy.sh          # PowerShell nativo: .\deploy.ps1 (equivale a sam build --use-container + sam deploy)
 # Tras el primer deploy: redesplegar con BACKEND_URL=http://<EC2-Dns>:8000/... y
 # ALLOWED_ORIGIN=https://<CloudFrontDomain> (outputs del stack).
 ./delete.sh          # retirada: vacía FrontendBucket + sam delete
@@ -105,14 +105,19 @@ Entre contenedores los servicios se resuelven por nombre: `db`, `backend`, `fron
 ## CONFIGURACIÓN Y SECRETOS
 
 - Variables del backend: definidas en `backend/config/settings.py` vía `os.environ`
-  (`DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `POSTGRES_*`,
-  `CORS_ALLOWED_ORIGINS`). Defaults de referencia en `.env.example`.
+  (`DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_TIME_ZONE`,
+  `POSTGRES_*`, `CORS_ALLOWED_ORIGINS`). Defaults de referencia en `.env.example`.
 - Prohibido hardcodear credenciales, hosts o puertos en código de aplicación.
 - `POSTGRES_HOST` debe seguir siendo `db` en local (nombre de servicio compose).
 - Los orígenes CORS nuevos se añaden a `CORS_ALLOWED_ORIGINS`/env, nunca en código.
 - Lambda: `BACKEND_URL` (local: `http://backend:8000/api/internal/notes-status/`;
   AWS: parámetro `BackendUrl` apuntando al EC2 — el hostname `backend` NO existe en AWS)
   y `ALLOWED_ORIGIN` (CORS, CSV; `*` solo opt-in explícito, nunca default).
+- Lambda -> backend: `/api/internal/notes-status/` acepta JWT de usuario activo o el
+  token server-to-server en la cabecera `X-Internal-Token` (`INTERNAL_API_TOKEN`).
+  Debe coincidir entre backend y Lambda: local `dev-internal-token`
+  (docker-compose + `aws/env.local.json`); AWS parámetro `InternalApiToken`
+  (deploy: env `INTERNAL_API_TOKEN`) y el `.env` del backend en EC2.
 
 ## CREDENCIALES DE DEMO (solo seed, no producción)
 
@@ -135,9 +140,10 @@ Entre contenedores los servicios se resuelven por nombre: `db`, `backend`, `fron
   activo** en `users/services.py` -> **400** al intentar desactivarlo o cambiarle el rol.
 - Logout es **del lado cliente** (JWT sin estado): el frontend borra los tokens;
   el endpoint no revoca el access token (expira solo). No agregar blacklist sin pedirlo.
-- Métricas `GET /api/internal/notes-status/` protegidas (cualquier usuario activo),
-  formato exacto `{"pending": X, "in_progress": Y, "done": Z}`. El dashboard del
-  frontend las consume vía `PUBLIC_METRICS_URL`.
+- Métricas `GET /api/internal/notes-status/` protegidas (cualquier usuario activo o
+  token interno `X-Internal-Token`), formato exacto
+  `{"pending": X, "in_progress": Y, "done": Z}`. El dashboard del frontend las
+  consume vía `PUBLIC_METRICS_URL`; la Lambda las consulta con el token interno.
 
 ## MODELADO Y MIGRACIONES
 
@@ -168,6 +174,9 @@ docker compose up --build                        # arranca sin errores
   build\index.html" es esperado e inofensivo.
 - El `Dockerfile` del frontend es multietapa: Stage 1 Node 20 build, Stage 2 Nginx
   sirve `/usr/share/nginx/html` (copiado de `/app/build`) en el puerto 3000.
+- `nginx.conf`: `try_files $uri $uri.html /index.html;` (SIN `$uri/`). El build genera
+  `dashboard.html` y la carpeta `dashboard/` (sin index); con `$uri/` antes del fallback,
+  recargar `/dashboard` daba 403. No volver a agregar `$uri/`.
 - `CorsMiddleware` debe permanecer ANTES de `CommonMiddleware` en `MIDDLEWARE`.
 - DRF: paginación activa (`PAGE_SIZE=50`); el frontend tolera `results` o array plano.
 - La API completa fue verificada end-to-end con un harness SQLite temporal
@@ -191,10 +200,21 @@ docker compose up --build                        # arranca sin errores
 - Lambda verificada localmente con harness (13 checks en verde): total calculado,
   CORS por origen configurado, preflight OPTIONS, 403 origen no permitido, 502 si el
   backend cae, eventos v1 y v2.
+- La Lambda envía `X-Internal-Token` en su GET al backend cuando `INTERNAL_API_TOKEN`
+  está configurado (sin token no agrega la cabecera y el backend responde 401).
 - `aws/deploy.sh|deploy.ps1|delete.sh|delete.ps1` deben permanecer consistentes con
   `template.yaml`: parámetros `BackendUrl`/`AllowedOrigin` (+ `EXTRA_OVERRIDES`),
   `STACK_NAME` (default `tablero-notas`), `--resolve-s3 --capabilities CAPABILITY_IAM`;
   delete usa el output `FrontendBucketName` y `sam delete --no-prompts`.
+- La Lambda se compila SIEMPRE con `sam build --use-container` (imagen oficial
+  `public.ecr.aws/sam/build-python3.11`): sin dependencia del Python del host. El runtime
+  del template es `python3.11` (Globals.Function) y los scripts deploy usan ese flag.
+- `aws/samconfig.toml` fija los defaults de SAM local: `use_container = true` (build en
+  contenedor; evita el error `Binary validation failed for python` con hosts sin Python
+  3.11), `docker_network = "tablero-net"`, `env_vars = "env.local.json"`, `port = 3001` y
+  `warm_containers = "EAGER"` (contenedores Lambda calientes desde el arranque: sin esto
+  SAM crea un contenedor nuevo por petición y /metrics tarda ~3-10 s).
+  Por eso `sam build` y `sam local start-api` sin flags también funcionan (desde `aws/`).
 - UI usuarios (`/dashboard/users`): crear (modal) + editar nombre/email (modal, PATCH
   existente) + rol/estado en tabla. No duplicar lógica de negocio del backend.
 - Dashboard (`/dashboard`): al montar hace un ping autenticado a
@@ -203,6 +223,10 @@ docker compose up --build                        # arranca sin errores
   desde `PUBLIC_METRICS_URL` (Lambda). No implementar un segundo mecanismo de auth.
 - `frontend/.env` NO se versiona: en un clon limpio, `npm run dev/build` fuera de Docker
   requiere `cp frontend/.env.example frontend/.env` (el flujo Docker lo provee vía ARG).
+- Zona horaria: `TIME_ZONE = os.environ.get("DJANGO_TIME_ZONE", "America/Bogota")` con
+  `USE_TZ = True` (verificado: la DB guarda UTC y el Admin/serializers muestran la hora
+  local configurada). No volver a dejar `TIME_ZONE = "UTC"`: causaba desfase -5 h en
+  Django Admin.
 
 ## ALCANCE PENDIENTE (orden sugerido para las 8h)
 

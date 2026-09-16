@@ -85,7 +85,7 @@
 </script>
 
 <div
-	class="w-56 rounded-md border border-amber-300 bg-amber-100 shadow-lg {dragging
+	class="anim-pop-in w-56 rounded-md border border-amber-300 bg-amber-100 shadow-lg {dragging
 		? 'z-50 shadow-2xl'
 		: 'z-10'}"
 	style="position: absolute; left: {pos.x}px; top: {pos.y}px;"

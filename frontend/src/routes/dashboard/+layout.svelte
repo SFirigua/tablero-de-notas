@@ -18,7 +18,7 @@
 	}
 </script>
 
-<div class="flex min-h-screen flex-col">
+<div class="flex h-screen flex-col">
 	<header class="flex flex-wrap items-center justify-between gap-3 bg-slate-900 px-6 py-3 text-white">
 		<div class="flex items-center gap-6">
 			<span class="text-base font-semibold">Tablero de Notas</span>
@@ -46,7 +46,7 @@
 		</div>
 	</header>
 
-	<main class="flex-1">
+	<main class="min-h-0 flex-1">
 		{@render children()}
 	</main>
 </div>

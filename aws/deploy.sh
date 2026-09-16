@@ -10,11 +10,16 @@
 # Variables de entorno opcionales:
 #   STACK_NAME       nombre del stack            (default: tablero-notas)
 #   AWS_REGION       región de AWS              (default: la configurada en la CLI)
-#   BACKEND_URL      -> parámetro BackendUrl    (URL de la API en EC2; en AWS NUNCA usar "backend")
-#   ALLOWED_ORIGIN   -> parámetro AllowedOrigin (CORS de la Lambda; CSV; usar la URL de CloudFront)
+#   BACKEND_URL      -> parámetro BackendUrl       (URL de la API en EC2; en AWS NUNCA usar "backend")
+#   ALLOWED_ORIGIN   -> parámetro AllowedOrigin    (CORS de la Lambda; CSV; usar la URL de CloudFront)
+#   INTERNAL_API_TOKEN -> parámetro InternalApiToken (token Lambda -> backend; debe coincidir con el
+#                                                    INTERNAL_API_TOKEN del .env del backend en EC2)
 #   EXTRA_OVERRIDES  parámetros SAM adicionales (p. ej. "InstanceType=t3.large KeyName=mi-clave")
 #
-# Requiere: AWS CLI v2 configurada (aws configure) + AWS SAM CLI.
+# Compila con `sam build --use-container` (imagen oficial de AWS Lambda): no requiere
+# tener Python 3.11 instalado en la máquina, solo Docker en marcha.
+#
+# Requiere: AWS CLI v2 configurada (aws configure) + AWS SAM CLI + Docker.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -36,6 +41,9 @@ fi
 if [[ -n "${ALLOWED_ORIGIN:-}" ]]; then
   OVERRIDES+=("AllowedOrigin=$ALLOWED_ORIGIN")
 fi
+if [[ -n "${INTERNAL_API_TOKEN:-}" ]]; then
+  OVERRIDES+=("InternalApiToken=$INTERNAL_API_TOKEN")
+fi
 if [[ -n "$EXTRA_OVERRIDES" ]]; then
   # shellcheck disable=SC2206
   OVERRIDES+=($EXTRA_OVERRIDES)
@@ -46,8 +54,8 @@ if (( ${#OVERRIDES[@]} > 0 )); then
   PARAM_ARGS=(--parameter-overrides "${OVERRIDES[@]}")
 fi
 
-echo "== sam build =="
-sam build
+echo "== sam build --use-container =="
+sam build --use-container
 
 echo "== sam deploy (stack: $STACK_NAME) =="
 sam deploy \

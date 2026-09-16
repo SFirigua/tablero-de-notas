@@ -28,12 +28,17 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-cambia-esta-clave-en-produccion}
       DJANGO_DEBUG: ${DJANGO_DEBUG:-True}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      # Zona horaria de exibición (los timestamps se guardan en UTC; USE_TZ=True).
+      DJANGO_TIME_ZONE: ${DJANGO_TIME_ZONE:-America/Bogota}
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-tablero}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://frontend:3000}
+      # Token compartido que la Lambda local envía en X-Internal-Token
+      # (debe coincidir con INTERNAL_API_TOKEN de aws/env.local.json).
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token}
     ports:
       - "8000:8000"
     depends_on:

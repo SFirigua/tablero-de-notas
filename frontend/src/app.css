@@ -1,3 +1,83 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@keyframes anim-fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes anim-rise-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes anim-pop-in {
+	from {
+		opacity: 0;
+		transform: scale(0.97);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+.anim-fade-in {
+	animation: anim-fade-in 160ms ease-out both;
+}
+
+.anim-rise-in {
+	animation: anim-rise-in 220ms ease-out both;
+}
+
+.anim-pop-in {
+	animation: anim-pop-in 150ms ease-out both;
+}
+
+.anim-stagger > * {
+	animation: anim-rise-in 220ms ease-out both;
+}
+
+.anim-stagger > *:nth-child(1) {
+	animation-delay: 0ms;
+}
+.anim-stagger > *:nth-child(2) {
+	animation-delay: 40ms;
+}
+.anim-stagger > *:nth-child(3) {
+	animation-delay: 80ms;
+}
+.anim-stagger > *:nth-child(4) {
+	animation-delay: 120ms;
+}
+.anim-stagger > *:nth-child(5) {
+	animation-delay: 160ms;
+}
+.anim-stagger > *:nth-child(6) {
+	animation-delay: 200ms;
+}
+
+dialog[open]::backdrop {
+	animation: anim-fade-in 150ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.anim-fade-in,
+	.anim-rise-in,
+	.anim-pop-in,
+	.anim-stagger > *,
+	dialog[open]::backdrop {
+		animation: none;
+	}
+}

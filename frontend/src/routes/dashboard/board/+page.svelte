@@ -67,7 +67,7 @@
 	}
 </script>
 
-<div class="p-6">
+<div class="flex h-full flex-col p-6 pb-20">
 	<div class="mb-4 flex items-center justify-between">
 		<h1 class="text-xl font-semibold">Tablero compartido</h1>
 		<button
@@ -87,7 +87,7 @@
 	{/if}
 
 	<div
-		class="relative min-h-[75vh] overflow-auto rounded-xl border border-slate-300 bg-slate-50 bg-[radial-gradient(circle,#cbd5e1_1px,transparent_1px)] [background-size:24px_24px]"
+		class="relative min-h-0 flex-1 overflow-auto rounded-xl border border-slate-300 bg-slate-50 bg-[radial-gradient(circle,#cbd5e1_1px,transparent_1px)] [background-size:24px_24px]"
 	>
 		{#if loading}
 			<p class="p-6 text-sm text-slate-500">Cargando notas…</p>
@@ -95,17 +95,17 @@
 			<p class="p-6 text-sm text-slate-500">
 				No hay notas todavía. Crea la primera con el botón «Nueva nota».
 			</p>
+		{:else}
+			{#each notes as note (note.id)}
+				<PostIt {note} onmove={handleMove} onsave={handleSave} ondelete={handleDelete} />
+			{/each}
 		{/if}
-
-		{#each notes as note (note.id)}
-			<PostIt {note} onmove={handleMove} onsave={handleSave} ondelete={handleDelete} />
-		{/each}
 	</div>
 </div>
 
 <button
 	type="button"
-	class="fixed bottom-6 right-6 z-40 rounded-full bg-slate-900 px-5 py-3 font-medium text-white shadow-lg hover:bg-slate-700 disabled:opacity-50"
+	class="fixed bottom-4 right-6 z-40 rounded-full bg-slate-900 px-5 py-3 font-medium text-white shadow-lg transition hover:bg-slate-700 active:scale-95 disabled:opacity-50"
 	disabled={creating}
 	onclick={newNote}
 >

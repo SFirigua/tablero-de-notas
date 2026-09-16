@@ -37,11 +37,11 @@ class NotesStatusMetricsView(APIView):
     """
     GET /api/internal/notes-status/ -> {"pending": X, "in_progress": Y, "done": Z}
 
-    Protegido: requiere JWT de un usuario activo (ADMIN o USER). Lo consume
-    el dashboard del frontend a través de la variable PUBLIC_METRICS_URL.
+    Protegido: JWT de un usuario activo (ADMIN o USER) o token interno
+    server-to-server (cabecera X-Internal-Token, Lambda de métricas).
     """
 
-    permission_classes = [IsActiveUser]
+    permission_classes = [note_permissions.IsActiveUserOrInternalToken]
 
     def get(self, request):
         return Response(services.status_counts())

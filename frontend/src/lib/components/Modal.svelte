@@ -25,7 +25,7 @@
 
 <dialog
 	bind:this={dialogEl}
-	class="w-full max-w-md rounded-lg p-0 shadow-xl backdrop:bg-slate-900/40"
+	class="anim-pop-in w-full max-w-md rounded-lg p-0 shadow-xl backdrop:bg-slate-900/40"
 	aria-label={title}
 	onclick={handleBackdropClick}
 	oncancel={(event) => {

@@ -111,6 +111,15 @@ CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
 
 # ------------------------------------------------------------------ #
+# API interna (consumo server-to-server: Lambda y dashboard)          #
+# ------------------------------------------------------------------ #
+# Token compartido que la Lambda envía en la cabecera X-Internal-Token
+# al consultar GET /api/internal/notes-status/. Vacío = solo JWT de
+# usuario activo (ver notes.permissions.IsActiveUserOrInternalToken).
+INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
+
+
+# ------------------------------------------------------------------ #
 # Usuario personalizado                                               #
 # ------------------------------------------------------------------ #
 AUTH_USER_MODEL = "users.User"
@@ -157,7 +166,10 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internacionalización y estáticos                                    #
 # ------------------------------------------------------------------ #
 LANGUAGE_CODE = "es"
-TIME_ZONE = "UTC"
+# Zona horaria de exibición (Admin y serializers). Con USE_TZ = True los
+# timestamps se guardan SIEMPRE en UTC en PostgreSQL; Django convierte a esta
+# zona al mostrar. Configurable por env (default: hora de Colombia, UTC-5).
+TIME_ZONE = os.environ.get("DJANGO_TIME_ZONE", "America/Bogota")
 USE_I18N = True
 USE_TZ = True
 

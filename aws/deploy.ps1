@@ -4,8 +4,11 @@
 
 .DESCRIPTION
   Ejecuta las mismas operaciones que aws/deploy.sh:
-  `sam build` y `sam deploy` (--resolve-s3, CAPABILITY_IAM, sin confirmación interactiva),
-  y al final muestra los Outputs del stack.
+  `sam build --use-container` y `sam deploy` (--resolve-s3, CAPABILITY_IAM, sin
+  confirmación interactiva), y al final muestra los Outputs del stack.
+
+  `--use-container` compila dentro de la imagen oficial de AWS Lambda, así no hace
+  falta tener Python 3.11 instalado en la máquina: solo Docker en marcha.
 
   Uso (PowerShell):
     .\deploy.ps1
@@ -16,6 +19,7 @@
     powershell -ExecutionPolicy Bypass -File .\deploy.ps1
 
   Variables de entorno opcionales: STACK_NAME, AWS_REGION, BACKEND_URL, ALLOWED_ORIGIN,
+  INTERNAL_API_TOKEN (token Lambda -> backend; debe coincidir con el del backend en EC2),
   EXTRA_OVERRIDES (p. ej. "InstanceType=t3.large KeyName=mi-clave").
   Requiere: AWS CLI v2 configurada + AWS SAM CLI.
 #>
@@ -25,6 +29,7 @@ param(
     [string]$Region = $env:AWS_REGION,
     [string]$BackendUrl = $env:BACKEND_URL,
     [string]$AllowedOrigin = $env:ALLOWED_ORIGIN,
+    [string]$InternalApiToken = $env:INTERNAL_API_TOKEN,
     [string]$ExtraOverrides = $env:EXTRA_OVERRIDES
 )
 
@@ -45,6 +50,7 @@ if ($Region) { $regionArgs += @("--region", $Region) }
 $overrides = @()
 if ($BackendUrl) { $overrides += "BackendUrl=$BackendUrl" }
 if ($AllowedOrigin) { $overrides += "AllowedOrigin=$AllowedOrigin" }
+if ($InternalApiToken) { $overrides += "InternalApiToken=$InternalApiToken" }
 if ($ExtraOverrides) {
     $overrides += $ExtraOverrides.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)
 }
@@ -52,8 +58,8 @@ if ($ExtraOverrides) {
 $paramArgs = @()
 if ($overrides.Count -gt 0) { $paramArgs = @("--parameter-overrides") + $overrides }
 
-Write-Host "== sam build =="
-sam build
+Write-Host "== sam build --use-container =="
+sam build --use-container
 if ($LASTEXITCODE -ne 0) { throw "sam build falló (código $LASTEXITCODE)." }
 
 Write-Host "== sam deploy (stack: $StackName) =="

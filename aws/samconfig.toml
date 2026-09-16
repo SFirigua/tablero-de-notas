@@ -1,0 +1,18 @@
+version = 0.1
+
+# Defaults del flujo local de SAM (evita fricción con el Python del host).
+# use_container = true -> sam build compila dentro de la imagen oficial de AWS Lambda
+# (public.ecr.aws/sam/build-python3.11); requiere Docker en marcha, no Python 3.11 local.
+[default.build.parameters]
+use_container = true
+
+# sam local start-api usa la red de docker-compose, el env local y el puerto 3001
+# sin necesidad de pasar los flags a mano.
+# warm_containers = EAGER: sin esto, SAM crea un contenedor nuevo en CADA petición
+# (cold start de ~3-10 s por request); con EAGER los contenedores arrancan al
+# iniciar SAM y las peticiones siguientes responden en milisegundos.
+[default.local_start_api.parameters]
+docker_network = "tablero-net"
+env_vars = "env.local.json"
+port = 3001
+warm_containers = "EAGER"

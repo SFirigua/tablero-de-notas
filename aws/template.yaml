@@ -35,6 +35,16 @@ Parameters:
       p. ej. AllowedOrigin=https://d123.cloudfront.net,http://localhost:3000.
       "*" es válido pero desaconsejado (requisito: CORS configurable, no comodín fijo).
 
+  InternalApiToken:
+    Type: String
+    Default: dev-internal-token
+    NoEcho: true
+    Description: >
+      Token compartido server-to-server entre la Lambda y el backend Django
+      (cabecera X-Internal-Token del endpoint /api/internal/notes-status/).
+      Debe coincidir con INTERNAL_API_TOKEN del backend (docker-compose en
+      local; .env del EC2 en AWS). Cambiarlo en entornos reales.
+
   InstanceType:
     Type: String
     Default: t3.small
@@ -77,6 +87,7 @@ Resources:
         Variables:
           BACKEND_URL: !Ref BackendUrl
           ALLOWED_ORIGIN: !Ref AllowedOrigin
+          INTERNAL_API_TOKEN: !Ref InternalApiToken
       Events:
         MetricsGet:
           Type: Api

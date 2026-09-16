@@ -83,6 +83,8 @@ necesarios (`FrontendOAC`, `FrontendBucketPolicy`, `ApiSecurityGroup`).
 - Node.js 20+ (solo desarrollo local del frontend)
 - Python 3.12+ (solo desarrollo local del backend)
 - AWS CLI v2 y AWS SAM CLI (para la capa serverless: `sam build`, `sam local`, `sam deploy`)
+- Docker en marcha para `sam build --use-container` (compila la Lambda en el contenedor
+  oficial de AWS; **no** hace falta tener Python 3.11 instalado en el host)
 - Credenciales AWS configuradas (`aws configure`) para el despliegue
 
 ---
@@ -178,7 +180,7 @@ El access token se envía en `Authorization: Bearer <token>` y se guarda en `ses
 | POST   | `/api/auth/logout/`           | Autenticado         | Ver nota de logout |
 | GET/POST/PATCH/DELETE | `/api/notes/…`    | ADMIN y USER activos | CRUD de notas (`title`, `text`, `status`, `pos_x`, `pos_y`) |
 | GET/POST/PATCH | `/api/users/…`        | Solo ADMIN          | CRUD de usuarios; la contraseña inicial es obligatoria al crear |
-| GET    | `/api/internal/notes-status/` | Usuario activo      | `{"pending": X, "in_progress": Y, "done": Z}` |
+| GET    | `/api/internal/notes-status/` | Usuario activo o token interno (`X-Internal-Token`) | `{"pending": X, "in_progress": Y, "done": Z}` |
 
 - Usuario con `is_active=False` → **401** inmediato en cada petición.
 - Regla de negocio: no se puede desactivar ni cambiar de rol al **último administrador
@@ -217,18 +219,37 @@ creada por compose. `aws/env.local.json` inyecta la configuración local de la f
 {
   "MetricsFunction": {
     "BACKEND_URL": "http://backend:8000/api/internal/notes-status/",
-    "ALLOWED_ORIGIN": "http://localhost:3000"
+    "ALLOWED_ORIGIN": "http://localhost:3000",
+    "INTERNAL_API_TOKEN": "dev-internal-token"
   }
 }
 ```
 
-Ejecución:
+Paso a paso (3 comandos):
 
 ```bash
 cd aws
-sam build
+sam build --use-container
 sam local start-api --docker-network tablero-net --env-vars env.local.json --port 3001
 ```
+
+> **¿Por qué `--use-container`?** Compila el código dentro de un contenedor oficial de
+> AWS Lambda (`public.ecr.aws/sam/build-python3.11`), no con el Python del host: el
+> artefacto es idéntico al runtime `python3.11` de AWS y el flujo es "frictionless" sin
+> importar qué versión de Python tenga instalada la máquina (o si no tiene ninguna).
+> Solo requiere Docker en marcha; la primera vez descarga la imagen (~1 min).
+
+`aws/samconfig.toml` fija esos mismos defaults (`use_container = true`, red `tablero-net`,
+`env.local.json`, puerto `3001` y `warm_containers = "EAGER"`), así que `sam build` y
+`sam local start-api` a secas también funcionan. Si `sam build` falla con
+`PythonPipBuilder:Validation - Binary validation failed for python`, se ejecutó sin
+`--use-container` (o fuera de `aws/`): intenta compilar con el Python local (p. ej. 3.12)
+en vez de con la imagen oficial de Python 3.11.
+
+> **Latencia de `/metrics` en local:** sin `--warm-containers`, SAM levanta un contenedor
+> Lambda NUEVO en cada petición (cold start de varios segundos). Con `EAGER` (fijado en
+> `samconfig.toml`) los contenedores arrancan junto con `sam local start-api` y quedan
+> calientes: cada petición baja a ~1 s en Windows/Docker Desktop.
 
 Prueba (en otra terminal):
 
@@ -241,13 +262,18 @@ curl -i http://127.0.0.1:3001/metrics -H "Origin: http://localhost:3000"
   con `name:`, para que no dependa del nombre del proyecto).
 - La Lambda llama a `BACKEND_URL` (`http://backend:8000/...`), resoluble **solo** dentro de
   la red Docker; en AWS ese hostname no existe y se usa el parámetro `BackendUrl`.
+- `/api/internal/notes-status/` está protegido: acepta JWT de un usuario activo (dashboard)
+  o el token server-to-server que envía la Lambda en la cabecera `X-Internal-Token`
+  (`INTERNAL_API_TOKEN`). En local, `docker-compose.yml` y `env.local.json` comparten el
+  mismo valor de demo (`dev-internal-token`); en AWS se controla con el parámetro
+  `InternalApiToken` del stack (cambiar en entornos reales).
 
 ---
 
 ## 10. Despliegue y retirada en AWS
 
-Scripts incluidos en `aws/` (equivalen a los comandos manuales; ejecutan `sam build` +
-`sam deploy`/`sam delete` y muestran los Outputs):
+Scripts incluidos en `aws/` (equivalen a los comandos manuales; ejecutan
+`sam build --use-container` + `sam deploy`/`sam delete` y muestran los Outputs):
 
 | Entorno                                   | Despliegue   | Retirada     |
 |-------------------------------------------|--------------|--------------|
@@ -262,13 +288,13 @@ Scripts incluidos en `aws/` (equivalen a los comandos manuales; ejecutan `sam bu
 ### 10.1 Infraestructura (SAM)
 
 Primera pasada (defaults del template; los scripts son opcionales, también puede usarse
-`sam build` + `sam deploy --guided` a mano):
+`sam build --use-container` + `sam deploy --guided` a mano):
 
 ```bash
 cd aws
 ./deploy.sh          # PowerShell: .\deploy.ps1
 # Parámetros del template: BackendUrl (default en la 1ª pasada), AllowedOrigin,
-# InstanceType, KeyName, SshCidr
+# InternalApiToken, InstanceType, KeyName, SshCidr
 ```
 
 Tras el primer deploy, tomar de los **Outputs**:
@@ -280,10 +306,12 @@ Y redesplegar con la configuración real (segunda pasada):
 ```bash
 BACKEND_URL="http://<ApiInstancePublicDns>:8000/api/internal/notes-status/" \
 ALLOWED_ORIGIN="https://<CloudFrontDomain>" \
+INTERNAL_API_TOKEN="<token-propio>" \
 ./deploy.sh
 # PowerShell:
 #   $env:BACKEND_URL="http://<ApiInstancePublicDns>:8000/api/internal/notes-status/"
 #   $env:ALLOWED_ORIGIN="https://<CloudFrontDomain>"
+#   $env:INTERNAL_API_TOKEN="<token-propio>"
 #   .\deploy.ps1
 ```
 
@@ -301,6 +329,7 @@ scp -i <clave.pem> -r ./backend ./docker-compose.yml ec2-user@<ApiInstancePublic
 ssh -i <clave.pem> ec2-user@<ApiInstancePublicDns>
 # En la instancia:
 cp backend/.env.example backend/.env   # ajustar DJANGO_ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS
+# INTERNAL_API_TOKEN debe coincidir con el parámetro InternalApiToken del stack SAM
 docker compose up -d --build db backend
 docker compose exec backend python manage.py seed_data
 ```
@@ -344,6 +373,7 @@ ejecutan `sam delete`. Manualmente serían:
 |-----------------------|-----------------------------------------------------------------|------------------------------------------------------------|
 | `BACKEND_URL`         | `http://backend:8000/api/internal/notes-status/` (red `tablero-net`) | `http://<EC2-PublicDns>:8000/api/internal/notes-status/` (parámetro `BackendUrl`) |
 | CORS de la Lambda     | `ALLOWED_ORIGIN=http://localhost:3000`                          | `AllowedOrigin=https://<CloudFrontDomain>` (parámetro, CSV) |
+| Token interno         | `dev-internal-token` (compose + `env.local.json`)               | parámetro `InternalApiToken` (debe coincidir con el `.env` del EC2) |
 | `PUBLIC_METRICS_URL`  | `http://localhost:3001/metrics` (SAM local)                     | `https://<API_GATEWAY>/Prod/metrics`                       |
 | Frontend              | Nginx sirviendo `./build` en `:3000`                            | S3 + CloudFront (OAC)                                      |
 | Base de datos         | Contenedor `db` + volumen `postgres_data`                       | PostgreSQL en Docker sobre la instancia EC2                |

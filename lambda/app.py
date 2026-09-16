@@ -12,11 +12,15 @@ Flujo:
      el default es un origen concreto, nunca el comodín.
 
 Configuración (variables de entorno, definidas en aws/template.yaml):
-  BACKEND_URL     URL del endpoint de métricas del backend.
-                  Local: http://backend:8000/api/internal/notes-status/
-                  AWS:   http://<EC2-PublicDns>:8000/api/internal/notes-status/
-                         (el hostname `backend` NO existe en AWS)
-  ALLOWED_ORIGIN  Origen(es) permitido(s) para CORS, separados por coma.
+  BACKEND_URL      URL del endpoint de métricas del backend.
+                   Local: http://backend:8000/api/internal/notes-status/
+                   AWS:   http://<EC2-PublicDns>:8000/api/internal/notes-status/
+                          (el hostname `backend` NO existe en AWS)
+  ALLOWED_ORIGIN   Origen(es) permitido(s) para CORS, separados por coma.
+  INTERNAL_API_TOKEN  Token compartido server-to-server; se envía en la
+                   cabecera X-Internal-Token. Debe coincidir con el
+                   INTERNAL_API_TOKEN del backend (local: docker-compose /
+                   env.local.json; AWS: parámetro InternalApiToken).
 
 Despliegue: aws/template.yaml (AWS SAM). Pruebas locales: ver README.
 """
@@ -81,7 +85,11 @@ def lambda_handler(event, context):
 def _fetch_metrics():
     """GET al backend Django y validación del payload de métricas."""
     url = os.environ.get("BACKEND_URL", DEFAULT_BACKEND_URL)
-    request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+    headers = {"Accept": "application/json"}
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    if token:
+        headers["X-Internal-Token"] = token
+    request = urllib.request.Request(url, method="GET", headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read().decode("utf-8"))

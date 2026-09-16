@@ -47,15 +47,21 @@
 		}
 	}
 
-	function replace(saved: ManagedUser) {
-		users = users.map((u) => (u.id === saved.id ? saved : u));
+	function replace(id: number, saved: Partial<ManagedUser>) {
+		users = users.map((u) => (u.id === id ? { ...u, ...saved, id: u.id } : u));
 	}
 
 	async function toggleActive(user: ManagedUser) {
+		const next = !user.is_active;
 		error = null;
+		users = users.map((u) => (u.id === user.id ? { ...u, is_active: next } : u));
 		try {
-			replace(await updateUser(user.id, { is_active: !user.is_active }));
+			const updated = await updateUser(user.id, { is_active: next });
+			if (typeof updated?.is_active === 'boolean') {
+				replace(user.id, { is_active: updated.is_active });
+			}
 		} catch (e) {
+			users = users.map((u) => (u.id === user.id ? { ...u, is_active: user.is_active } : u));
 			error = e instanceof ApiError ? e.message : 'No se pudo cambiar el estado.';
 		}
 	}
@@ -64,7 +70,7 @@
 		if (role === user.role) return;
 		error = null;
 		try {
-			replace(await updateUser(user.id, { role }));
+			replace(user.id, await updateUser(user.id, { role }));
 		} catch (e) {
 			error = e instanceof ApiError ? e.message : 'No se pudo cambiar el rol.';
 			await load();
@@ -101,7 +107,10 @@
 		savingEdit = true;
 		try {
 			// Reutiliza PATCH /api/users/<id>/ (misma lógica de negocio del backend).
-			replace(await updateUser(editing.id, { email: editForm.email, name: editForm.name }));
+			replace(
+				editing.id,
+				await updateUser(editing.id, { email: editForm.email, name: editForm.name })
+			);
 			showEdit = false;
 		} catch (e) {
 			editError = e instanceof ApiError ? e.message : 'No se pudo guardar el usuario.';
@@ -132,7 +141,7 @@
 		</p>
 	{/if}
 
-	<div class="overflow-hidden rounded-lg bg-white shadow">
+	<div class="anim-fade-in overflow-hidden rounded-lg bg-white shadow">
 		<table class="w-full text-left text-sm">
 			<thead class="bg-slate-100 text-xs uppercase tracking-wide text-slate-500">
 				<tr>

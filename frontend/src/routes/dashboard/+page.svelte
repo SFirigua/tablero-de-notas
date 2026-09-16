@@ -66,9 +66,9 @@
 		</p>
 	{/if}
 
-	<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+	<div class="anim-stagger grid grid-cols-2 gap-4 lg:grid-cols-4">
 		{#each cards as card (card.label)}
-			<div class="rounded-lg bg-white p-4 shadow">
+			<div class="rounded-lg bg-white p-4 shadow transition-shadow hover:shadow-md">
 				<p class="text-sm text-slate-500">{card.label}</p>
 				<p class="mt-1 text-3xl font-bold {card.accent}">
 					{loading ? '…' : card.value}
